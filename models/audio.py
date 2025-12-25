@@ -2,7 +2,7 @@ import numpy as np
 import soundfile as sf
 import json
 
-def generate_multichannel_audio(
+def generate_audio(
     source_signal,
     mic_positions,
     direction,
@@ -25,7 +25,7 @@ def generate_multichannel_audio(
     return signals, delays
 
 
-def write_multichannel_wav(
+def write_file(
     filename,
     signals,
     fs
@@ -33,7 +33,7 @@ def write_multichannel_wav(
     sf.write(filename, signals.T, fs)
 
 
-def print_metadata(
+def save_metadata(
     fs,
     mic_positions,
     direction,

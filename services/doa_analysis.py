@@ -7,19 +7,12 @@ from models.dsp import (
     estimate_direction_vector,
 )
 from utils.transforms import unit_vector_to_angles
+from utils.analysis import angular_error
 
 
-def angular_error(u_true, u_est):
-    """
-    Angular error between two unit vectors (degrees)
-    """
-    dot = np.clip(np.dot(u_true, u_est), -1.0, 1.0)
-    return np.degrees(np.arccos(dot))
-
-
-def main():
-    wav_file = "data/sample.wav"
-    meta_file = "data/meta.json"
+def analyze_doa(config):
+    wav_file = config.audio_file
+    meta_file = config.metadata_file
 
     with open(meta_file, "r") as f:
         meta = json.load(f)
@@ -37,7 +30,7 @@ def main():
     tdoa_matrix = estimate_tdoa(
         mic_signals,
         fs=fs,
-        interp=8
+        interp=config.interp,
     )
 
     est_direction = estimate_direction_vector(
@@ -57,6 +50,7 @@ def main():
     print("\nEstimated Direction Vector:")
     print(est_direction)
 
+    print("\nDirection Angles (degrees):")
     print(f"  True Azimuth      : {true_az:.2f}")
     print(f"  Estimated Azimuth : {est_az:.2f}")
     print(f"  True Elevation    : {true_el:.2f}")
@@ -65,9 +59,6 @@ def main():
     print("\nAccuracy:")
     print(f"  Angular Error     : {ang_err:.4f} degrees")
 
-    print("\nTDOA Matrix (microseconds):")
-    print(np.round(tdoa_matrix * 1e6, 3))
-
-
-if __name__ == "__main__":
-    main()
+    if config.print_tdoa:
+        print("\nTDOA Matrix (microseconds):")
+        print(np.round(tdoa_matrix * 1e6, 3))

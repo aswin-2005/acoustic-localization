@@ -1,0 +1,9 @@
+input:
+  audio_file: data/sample.wav
+  metadata_file: data/meta.json
+
+gcc_phat:
+  interp: 1
+
+evaluation:
+  print_tdoa: true

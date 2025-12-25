@@ -4,33 +4,30 @@ A Python project for acoustic source localization using time-difference-of-arriv
 
 ## Setup
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/aswin-2005/acoustic-localization.git
-   cd acoustic-localization
-   ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
 ## Usage
 
-1. Generate sample data:
-   ```bash
-   python synthesize.py
-   ```
+Run the main script:
+```bash
+python main.py
+```
 
-2. Analyze the audio to estimate source direction and compare with true data:
-   ```bash
-   python analyze.py
-   ```
+## Data Flow
+
+1. Load synthesis and DOA configurations from `config/`
+2. Synthesize multichannel audio data and save to `data/`
+3. Analyze audio for direction-of-arrival (DOA) estimation using models and utilities
+4. Output estimation results
 
 ## Project Structure
 
-- `analyze.py`: Main analysis script for direction estimation
-- `synthesize.py`: Generates synthetic multichannel audio data
-- `models/`: Core algorithms (DSP, audio processing)
-- `utils/`: Utility functions (transforms)
-- `data/`: Generated audio files and metadata
+- `main.py`: Entry point for the application
+- `config/`: Configuration files (DOA and synthesis settings)
+- `data/`: Audio data and metadata
+- `models/`: Core model classes (audio processing, DSP)
+- `services/`: Service modules (audio synthesis, DOA analysis)
+- `utils/`: Utility functions (analysis, data config, transforms)

@@ -1,0 +1,17 @@
+audio:
+  sample_rate: 48000
+  duration: 1.0
+
+geometry:
+  azimuth: 40.0
+  elevation: 20.0
+  mic_positions:
+    - [0.0, 0.0, 0.0]
+    - [0.05, 0.0, 0.0]
+    - [0.0, 0.05, 0.0]
+    - [0.05, 0.0, 0.05]
+
+output:
+  directory: data
+  audio_file: sample.wav
+  metadata_file: meta.json
