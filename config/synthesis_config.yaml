@@ -1,10 +1,26 @@
+source:
+  type: file # options: file | pure_tone | noise | tone_burst
+  
+  # below parameters work only for type: pure_tone, tone_burst
+  frequency: 1000.0
+
+  # below parameters work only for type: file
+  file_path: samples/glass-breaking.wav
+  
+  # below parameters work only for type: tone_burst
+  burst_duration: 0.5
+
 audio:
+  # sample rate and duration are not used when source type is file
   sample_rate: 48000
   duration: 1.0
 
 geometry:
+  # source position in spherical coordinates (in degrees)
   azimuth: 40.0
   elevation: 20.0
+  # position of microphones in Cartesian coordinates (in meters)
+  # keep mic0 at origin [0.0, 0.0, 0.0]
   mic_positions:
     - [0.0, 0.0, 0.0]
     - [0.05, 0.0, 0.0]

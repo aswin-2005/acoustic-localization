@@ -2,9 +2,18 @@ from dataclasses import dataclass
 from pathlib import Path
 import yaml
 import numpy as np
+from typing import Optional
+
+@dataclass
+class SourceConfig:
+    type: str                 # file | pure_tone | noise | tone_burst
+    frequency: Optional[float] = None
+    file_path: Optional[str] = None
+    burst_duration: Optional[float] = None
 
 @dataclass
 class SynthesisConfig:
+    source: SourceConfig
     sample_rate: int
     duration: float
     azimuth: float
@@ -13,7 +22,6 @@ class SynthesisConfig:
     output_dir: str
     audio_file: str
     metadata_file: str
-
 
 @dataclass
 class DOAConfig:
@@ -25,7 +33,6 @@ class DOAConfig:
 def _load_yaml(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
@@ -35,8 +42,14 @@ def load_synthesis_config(
 ) -> SynthesisConfig:
     cfg_path = Path(config_dir) / filename
     y = _load_yaml(cfg_path)
-
+    source_cfg = SourceConfig(
+        type=y["source"]["type"],
+        frequency=y["source"].get("frequency"),
+        file_path=y["source"].get("file_path"),
+        burst_duration=y["source"].get("burst_duration"),
+    )
     return SynthesisConfig(
+        source=source_cfg,
         sample_rate=y["audio"]["sample_rate"],
         duration=y["audio"]["duration"],
         azimuth=y["geometry"]["azimuth"],
@@ -46,7 +59,6 @@ def load_synthesis_config(
         audio_file=y["output"]["audio_file"],
         metadata_file=y["output"]["metadata_file"],
     )
-
 
 def load_doa_config(
     config_dir: str = "config",

@@ -23,6 +23,13 @@ python main.py
 3. Analyze audio for direction-of-arrival (DOA) estimation using models and utilities
 4. Output estimation results
 
+## Configuration
+
+- **Tweaking Parameters**: Edit `config/synthesis_config.yaml` to change synthesis settings (source type, geometry, audio parameters). Edit `config/doa_config.yaml` for analysis settings (GCC-PHAT interpolation, evaluation options).
+- **Loading Custom Audio**: 
+  - For synthesis: Set `source.type` to 'file' and `source.file_path` to your audio file path.
+  - For analysis: Set `input.audio_file` to your multichannel audio file and `input.metadata_file` to corresponding metadata.
+
 ## Project Structure
 
 - `main.py`: Entry point for the application

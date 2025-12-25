@@ -1,6 +1,6 @@
 {
-  "sampling_rate_hz": 48000,
-  "duration_sec": 8.3e-05,
+  "sampling_rate_hz": 24000,
+  "duration_sec": 0.000167,
   "geometry": {
     "mic_positions_m": [
       [

@@ -6,4 +6,4 @@ gcc_phat:
   interp: 1
 
 evaluation:
-  print_tdoa: true
+  print_tdoa: false

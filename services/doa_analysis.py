@@ -7,7 +7,7 @@ from models.dsp import (
     estimate_direction_vector,
 )
 from utils.transforms import unit_vector_to_angles
-from utils.analysis import angular_error
+from utils.evaluations import angular_error
 
 
 def analyze_doa(config):
@@ -50,11 +50,12 @@ def analyze_doa(config):
     print("\nEstimated Direction Vector:")
     print(est_direction)
 
-    print("\nDirection Angles (degrees):")
-    print(f"  True Azimuth      : {true_az:.2f}")
-    print(f"  Estimated Azimuth : {est_az:.2f}")
-    print(f"  True Elevation    : {true_el:.2f}")
-    print(f"  Estimated Elev.   : {est_el:.2f}")
+    print("\nTrue Direction Angles (degrees):")
+    print(f"  Azimuth      : {true_az:.2f}")
+    print(f"  Elevation    : {true_el:.2f}")
+    print("\nEstimated Direction Angles (degrees):")
+    print(f"  Azimuth : {est_az:.2f}")
+    print(f"  Elevation   : {est_el:.2f}")
 
     print("\nAccuracy:")
     print(f"  Angular Error     : {ang_err:.4f} degrees")
