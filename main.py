@@ -6,6 +6,14 @@ import config
 from stream import load_config, simulate_one_second
 from models.doa import analyze_doa
 from models.sed import detect_impacts
+from visualize import RollingSpectrogram
+
+spec_viz = RollingSpectrogram(
+    fs=config.FS,
+    n_fft=1024,
+    hop_length=256,
+    history_seconds=30
+)
 
 
 def ground_truth_doa(source_pos, mic_positions):
@@ -47,6 +55,7 @@ while True:
         # Run SED
         # -------------------------
         mono = frame.mean(axis=0)
+        spec_viz.update(mono)
         sed_hits, _ = detect_impacts(mono)
 
         if not sed_hits:
@@ -86,7 +95,11 @@ while True:
             el_err = el_est - el_gt
             print(f"\nAzimuth Error : {az_err:.2f}")
             print(f"Elevation Error : {el_err:.2f}")
-
+            spec_viz.update(
+                mono_signal=mono,
+                az_err=az_err,
+                el_err=el_err
+            )
             break
 
         print()

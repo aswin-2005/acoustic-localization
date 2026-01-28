@@ -5,3 +5,6 @@ panns-inference
 
 pyroomacoustics
 librosa
+
+matplotlib
+scipy

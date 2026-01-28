@@ -33,7 +33,7 @@ MIC_POSITIONS = np.array([
 # =========================
 EVENT_DIR = "audio/events"
 NOISE_DIR = "audio/noise"
-EVENT_PROBABILITY = 0.7
+EVENT_PROBABILITY = 0.1
 
 # =========================
 # SED
