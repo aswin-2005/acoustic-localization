@@ -1,0 +1,7 @@
+numpy
+soundfile
+torch
+panns-inference
+
+pyroomacoustics
+librosa

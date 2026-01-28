@@ -1,0 +1,15 @@
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Caches
+__pycache__/
+.pytest_cache/
+.cache/
+*.py[cod]
+*$py.class
+
+
+panns_data/
