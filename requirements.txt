@@ -1,0 +1,15 @@
+numpy
+soundfile
+pyroomacoustics
+tqdm
+scipy
+librosa
+torch
+torchvision
+matplotlib
+pandas
+scikit-learn
+torchlibrosa
+sounddevice
+flask
+flask-socketio

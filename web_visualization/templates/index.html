@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acoustic Surveillance - Web 3D Visualization</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <!-- Three.js from unpkg -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+    
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div id="ui-container">
+        <header>
+            <h1>ACOUSTIC SURVEILLANCE</h1>
+            <div id="status-bar">
+                <span class="status-indicator"></span>
+                <span id="status-text">Connecting to pipeline...</span>
+            </div>
+        </header>
+        
+        <div id="views-container">
+            <!-- Left Panel: 3D Room View -->
+            <div class="panel" id="room-panel">
+                <div class="panel-header">
+                    <h2>3D ROOM VIEW</h2>
+                    <div id="room-stats">Waiting for config...</div>
+                </div>
+                <!-- 3D Viewport goes here -->
+                <div id="view3d-container" class="viewport"></div>
+                <div id="legend">
+                    <div class="legend-item"><span class="color-box" style="background:#58a6ff;"></span>Mic Array</div>
+                    <div class="legend-item"><span class="color-box" style="background:#39d2c0;"></span>Camera</div>
+                    <div class="legend-item"><span class="color-box" style="background:#f85149;"></span>Actual</div>
+                    <div class="legend-item"><span class="color-box" style="background:#3fb950;"></span>Predicted</div>
+                </div>
+            </div>
+            
+            <!-- Right Panel: Camera POV and logs -->
+            <div class="right-col">
+                <div class="panel" id="pov-panel">
+                    <div class="panel-header">
+                        <h2>CAMERA POV (2D)</h2>
+                        <div id="camera-stats">Az: 0.0&deg; | El: 0.0&deg;</div>
+                    </div>
+                    <!-- 2D Viewport goes here -->
+                    <div id="viewpov-container" class="viewport"></div>
+                </div>
+                
+                <div class="panel" id="log-panel">
+                    <div class="panel-header">
+                        <h2>EVENT LOG</h2>
+                    </div>
+                    <div id="log-content">
+                        <!-- Logs appended here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Application Logic -->
+    <script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

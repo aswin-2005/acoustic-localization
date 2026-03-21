@@ -1,0 +1,1301 @@
+================================================================================
+  ACOUSTIC SURVEILLANCE PIPELINE -- COMPLETE CODEBASE DOCUMENTATION
+  Version: v8
+  Date: 2026-03-12
+  Language: Python 3.x + JavaScript (ES Modules)
+================================================================================
+
+
+TABLE OF CONTENTS
+-----------------
+  1.  Project Overview
+  2.  System Architecture
+  3.  Directory Structure
+  4.  Configuration Layer
+      4.1  config.py -- Global Configuration
+  5.  Digital Signal Processing (DSP)
+      5.1  dsp/main.py
+  6.  Sound Event Detection (SED)
+      6.1  sed/model/main.py -- CNN14 Model Architecture
+      6.2  sed/api.py -- SEDPredictor API
+      6.3  sed/training_pipeline/dataset.py -- Dataset Loader
+      6.4  sed/training_pipeline/train.py -- Fine-tuning Script
+  7.  Direction of Arrival (DOA)
+      7.1  doa/model/main.py -- SSLModel Architecture
+      7.2  doa/api.py -- DOAPredictor API
+      7.3  doa/training_pipeline/train_config.py -- Training Hyperparameters
+      7.4  doa/training_pipeline/data_gen/generate_data.py -- Synthetic Data Generator
+      7.5  doa/training_pipeline/train.py -- DOA Training Script
+  8.  Stream Simulation
+      8.1  stream/generator.py -- AudioStreamGenerator
+      8.2  stream/pipeline.py -- Inference Pipeline
+  9.  Web Visualization
+      9.1  web_visualization/server.py -- Flask + Socket.IO Backend
+      9.2  web_visualization/dashboard.py -- WebLiveDashboard
+      9.3  web_visualization/report.py -- Session Analysis Report
+      9.4  web_visualization/templates/index.html -- Frontend HTML
+      9.5  web_visualization/static/js/app.js -- Three.js Frontend Logic
+      9.6  web_visualization/static/css/style.css -- Styling
+  10. Offline Evaluation & Testing
+      10.1 test_runner.py -- DOA Offline Evaluator
+      10.2 test_sed.py / test_doa.py / test_unforeseen.py
+  11. Data Flow: End-to-End Pipeline Walkthrough
+  12. Key Algorithms Explained
+      12.1 GCC-PHAT (Time Delay Of Arrival)
+      12.2 Room Acoustics Simulation (Image Source Method)
+      12.3 SSLModel: 1D CNN for DOA
+      12.4 CNN14: 2D CNN for SED
+  13. How to Run the System
+  14. Dependencies
+  15. Configuration Quick-Reference Table
+
+
+================================================================================
+  1. PROJECT OVERVIEW
+================================================================================
+
+This project is an Acoustic Surveillance Pipeline -- a real-time audio analysis
+system that:
+
+  1. SIMULATES a continuous multi-channel audio stream from a tetrahedral
+     4-microphone array placed in a 3D room.
+
+  2. DETECTS threatening/notable sound events (gunshots, sirens, glass breaks,
+     explosions, etc.) using a fine-tuned convolutional audio classifier (SED --
+     Sound Event Detection).
+
+  3. LOCALIZES detected events in 3D space (azimuth + elevation) using a learned
+     Direction of Arrival (DOA) model.
+
+  4. VISUALIZES the scene in real-time via a browser-based 3D dashboard built with
+     Three.js, showing a rendered room, a rotating IP camera model, and animated
+     event markers.
+
+  5. REPORTS quantitative session performance (SED precision/recall/F1, DOA mean
+     angular error) automatically when the pipeline is stopped.
+
+The system is designed as a mini-project demonstrating an end-to-end ML pipeline
+for audio surveillance: from synthetic data generation, through model training,
+streaming inference, and live visualization.
+
+
+================================================================================
+  2. SYSTEM ARCHITECTURE
+================================================================================
+
+  +-----------------------------------------------------------------------+
+  |                     PROCESS 1: Generator                              |
+  |  AudioStreamGenerator                                                 |
+  |  - Simulates room acoustics with pyroomacoustics (ISM)                |
+  |  - Randomly places sound sources in 3D space                          |
+  |  - Writes 5-second 4-channel audio chunks to stream_queue             |
+  +--------------------------------+--------------------------------------+
+                                   |
+                         multiprocessing.Queue
+                         {timestamp, audio[4,N], events[]}
+                                   |
+                                   v
+  +-----------------------------------------------------------------------+
+  |                     PROCESS 2: Pipeline                               |
+  |  run_pipeline()                                                       |
+  |                                                                       |
+  |   +----------+   TRIGGER?   +----------+                             |
+  |   |  SED     |----YES------>|  DOA     |                             |
+  |   |  CNN14   |              |  SSLModel|                             |
+  |   | (detect) |              | (locate) |                             |
+  |   +----------+              +----------+                             |
+  |         |                       |                                    |
+  |         +--------> viz_queue <--+                                    |
+  +--------------------------------+--------------------------------------+
+                                   |
+                         multiprocessing.Queue
+                         {timestamp, detected_event, pred_az, pred_el, ...}
+                                   |
+                                   v
+  +-----------------------------------------------------------------------+
+  |                  MAIN THREAD: Dashboard                               |
+  |  WebLiveDashboard                                                     |
+  |  - Accumulates frame records for session reporting                    |
+  |  - HTTP POST /api/ping  -->  Flask server                             |
+  +--------------------------------+--------------------------------------+
+                                   |
+                          Socket.IO (WebSockets)
+                                   |
+                                   v
+  +-----------------------------------------------------------------------+
+  |             PROCESS 3: Flask/Socket.IO Server                         |
+  |  web_visualization/server.py                                          |
+  |  - Serves index.html (Three.js 3D visualization)                      |
+  |  - /api/init  --> sets room/mic geometry                              |
+  |  - /api/ping  --> broadcasts event data to browser                    |
+  +-----------------------------------------------------------------------+
+                                   |
+                          Browser WebSocket
+                                   |
+                                   v
+  +-----------------------------------------------------------------------+
+  |                  BROWSER: Three.js Frontend                           |
+  |  app.js                                                               |
+  |  - Renders 3D room, microphone array, IP camera model                 |
+  |  - Smooth camera rotation toward predicted DOA                        |
+  |  - Pulsing GT marker (red sphere) + spinning Pred marker (green cube) |
+  |  - Camera POV viewport (what the surveillance camera "sees")          |
+  |  - Event log panel                                                    |
+  +-----------------------------------------------------------------------+
+
+
+================================================================================
+  3. DIRECTORY STRUCTURE
+================================================================================
+
+  v8/
+  |-- config.py                          Global system config (single source of truth)
+  |-- requirements.txt                   Python dependencies
+  |-- test_runner.py                     Offline DOA batch evaluation
+  |-- test_sed.py                        Quick SED model test
+  |-- test_doa.py                        Quick DOA model test
+  |-- test_unforeseen.py                 Test on unforeseen audio samples
+  |-- CODEBASE_DOCUMENTATION.txt        This file
+  |
+  |-- dsp/
+  |   |-- __init__.py
+  |   `-- main.py                        GCC-PHAT, coordinate conversions, windowing
+  |
+  |-- sed/
+  |   |-- __init__.py
+  |   |-- api.py                         High-level SEDPredictor API
+  |   |-- model/
+  |   |   |-- __init__.py
+  |   |   |-- main.py                    CNN14 model architecture
+  |   |   |-- labels/
+  |   |   |   `-- custom_class_labels_indices.csv   Class index <-> name mapping
+  |   |   `-- weights/
+  |   |       `-- custom_Cnn14.pth       Fine-tuned model weights
+  |   `-- training_pipeline/
+  |       |-- dataset.py                 CustomAudioDataset + DataLoader factory
+  |       `-- train.py                   Fine-tuning script (transfer learning)
+  |
+  |-- doa/
+  |   |-- __init__.py
+  |   |-- api.py                         High-level DOAPredictor API
+  |   |-- data/                          Generated training/test data
+  |   |   `-- dataset/
+  |   |       |-- train/  {audio/, features/, labels.json}
+  |   |       `-- test/   {audio/, features/, labels.json}
+  |   |-- model/
+  |   |   |-- __init__.py
+  |   |   |-- main.py                    SSLModel 1D CNN architecture
+  |   |   `-- weights/
+  |   |       `-- ssl_model.pth          Trained model weights
+  |   `-- training_pipeline/
+  |       |-- __init__.py
+  |       |-- train_config.py            DOA training hyperparameters & room ranges
+  |       |-- train.py                   DOA training loop
+  |       `-- data_gen/
+  |           |-- __init__.py
+  |           `-- generate_data.py       Synthetic 4ch audio + GCC-PHAT feature gen
+  |
+  |-- stream/
+  |   |-- generator.py                   AudioStreamGenerator (continuous 4ch sim)
+  |   `-- pipeline.py                    Main consumer: SED -> DOA -> viz routing
+  |
+  |-- web_visualization/
+  |   |-- server.py                      Flask + Socket.IO REST & WebSocket server
+  |   |-- dashboard.py                   WebLiveDashboard (queue consumer + reporter)
+  |   |-- report.py                      Post-session text report generator
+  |   |-- templates/
+  |   |   `-- index.html                 Browser UI shell
+  |   `-- static/
+  |       |-- css/style.css              Dark-theme CSS
+  |       `-- js/app.js                  Three.js 3D scene + Socket.IO client
+  |
+  |-- samples/                           Audio sample library (per-class subdirectories)
+  |   |-- Glassbreak/
+  |   |-- Gunshot/
+  |   |-- explosion/
+  |   |-- siren/
+  |   |-- whack/
+  |   `-- background/
+  |
+  |-- reports/                           Auto-generated session log files
+  |   `-- sim_YYYYMMDD_HHMMSS.log
+  |
+  `-- visualize/                         Legacy/experimental visualization scripts
+      |-- config.py
+      |-- dsp_pipeline.py
+      |-- live_dashboard.py
+      |-- realtime_visualization.py
+      |-- simulation.py
+      `-- visualization.py
+
+
+================================================================================
+  4. CONFIGURATION LAYER
+================================================================================
+
+4.1  config.py -- Global Configuration
+---------------------------------------
+
+Role:  Single source of truth. Every module imports from this file using
+       "from config import *". Changing a value here propagates everywhere.
+
+PHYSICAL CONSTANTS
+  SAMPLE_RATE      = 16000       Hz. DOA operates at this rate; SED internally
+                                 resamples to 32 kHz.
+  SPEED_OF_SOUND   = 343.0       m/s, used to compute TDOA lag window bounds.
+
+MICROPHONE ARRAY GEOMETRY
+  ARRAY_RADIUS     = 0.05        Radius of tetrahedral mic array in metres.
+
+  MIC_POSITIONS_LOCAL            Shape [3, 4]. Microphone positions relative to
+                                 array center. Pre-computed from unit tetrahedral
+                                 vectors scaled by ARRAY_RADIUS.
+                                 The 4 mics sit at the vertices of a regular
+                                 tetrahedron, giving full 3D spatial coverage.
+
+  MAX_MIC_SEP                    Maximum separation between any two microphones
+                                 (metres), auto-computed from MIC_POSITIONS_LOCAL.
+
+DSP CONSTRAINTS
+  MAX_LAG                        Maximum TDOA lag in samples:
+                                   ceil(MAX_MIC_SEP / SPEED_OF_SOUND * SAMPLE_RATE)
+                                   * 3 + 4
+                                 Default evaluates to ~16 samples.
+  GCC_PHAT_LEN    = 2*MAX_LAG+1  Length of each GCC-PHAT vector (33 samples
+                                 with default config).
+
+WINDOWING
+  WINDOW_DURATION = 1.0          Analysis window in seconds.
+  WINDOW_SAMPLES  = 16000        Analysis window in samples.
+
+STREAM / EVENT GENERATION
+  EVENT_PROBABILITY = 0.9        Probability (0.0-1.0) that a stream block contains
+                                 a sound event. Increase toward 1.0 for more events,
+                                 decrease toward 0.0 for more silence blocks.
+
+ROOM GEOMETRY
+  ROOM_DIM        = [8.0, 6.0, 3.5]   Room dimensions [Width, Length, Height] in
+                                       metres. Shared between generator and dashboard.
+  MIC_ARRAY_CENTER = [4.0, 3.0, 1.5]  Microphone array center position in the room
+                                       (x=W/2, y=L/2, z=1.5m from floor).
+
+GLOBAL PATHS  (all auto-computed from ROOT_DIR)
+  ROOT_DIR          -- Absolute path to project root
+  SAMPLES_DIR       -- <root>/samples
+  DOA_DATA_DIR      -- <root>/doa/data
+  DOA_MODEL_WEIGHTS -- .../doa/model/weights/ssl_model.pth
+  SED_MODEL_WEIGHTS -- .../sed/model/weights/custom_Cnn14.pth
+  SED_LABELS_CSV    -- .../sed/model/labels/custom_class_labels_indices.csv
+
+LOCALIZATION TRIGGERS
+  A dictionary mapping event class name -> minimum confidence threshold:
+
+      LOCALIZATION_TRIGGERS = {
+          "Glassbreak": 0.70,
+          "Gunshot":    0.70,
+          "explosion":  0.40,
+          "whack":      0.70,
+          "siren":      0.70,
+      }
+
+  Only sounds in this dictionary can trigger DOA localization.
+  "explosion" has a lower threshold (0.40) because the model tends to
+  under-predict it relative to the other classes.
+
+CAMERA VISUALIZATION (legacy visualize/ module)
+  CAMERA_INIT_AZ    = 0.0        Starting azimuth in degrees.
+  CAMERA_INIT_EL    = 0.0        Starting elevation in degrees.
+  CAMERA_TURN_SPEED = 30.0       Rotation speed in degrees/second.
+
+
+================================================================================
+  5. DIGITAL SIGNAL PROCESSING (DSP)
+================================================================================
+
+5.1  dsp/main.py
+-----------------
+
+This is the core signal processing utility module used by the DOA data generator,
+the DOA training pipeline, and the real-time pipeline.
+
+------------------------------------------------------------
+compute_gcc_phat(sig, ref_sig, fs, max_lag)
+------------------------------------------------------------
+Purpose:
+  Generalized Cross Correlation with Phase Transform. Computes the TDOA
+  (Time Difference of Arrival) correlation between two microphone signals.
+
+Inputs:
+  sig      -- numpy array, signal from microphone M (mic 1, 2, or 3)
+  ref_sig  -- numpy array, reference signal from mic 0
+  fs       -- sample rate
+  max_lag  -- maximum lag window in samples (from config MAX_LAG)
+
+Algorithm:
+  1. Compute FFT of both signals (zero-padded to len(sig)+len(ref_sig))
+  2. Cross-spectrum: R = FFT(sig) x conj(FFT(ref))
+  3. Phase whitening: R /= |R| + epsilon   (removes spectral coloration,
+     leaving only phase = delay information)
+  4. IFFT to get cross-correlation in time domain
+  5. Extract lag window [-max_lag, +max_lag] centered at zero lag
+
+Output:
+  numpy array of shape (2*max_lag+1,) = (GCC_PHAT_LEN,) = shape (33,)
+  A peak at lag tau means the sound arrived tau samples later at sig than
+  at ref_sig.
+
+Why phase whitening?
+  Without whitening, the correlation is dominated by spectral peaks (e.g.,
+  vowel formants). Whitening flattens the spectrum so the peak purely
+  represents the geometric delay, not spectral content.
+
+Usage in pipeline:
+  3 pairs computed per chunk: (Mic1,Mic0), (Mic2,Mic0), (Mic3,Mic0)
+  Stacked to shape (3, 33) -> fed to DOA model
+
+------------------------------------------------------------
+cartesian_to_spherical(x, y, z)
+------------------------------------------------------------
+  Converts a 3D Cartesian position to (azimuth, elevation) in radians.
+    azimuth   = atan2(y, x)      -- angle in horizontal plane from +X axis
+    elevation = arcsin(z / r)    -- angle above/below horizontal plane
+
+------------------------------------------------------------
+spherical_to_cartesian(az, el)
+------------------------------------------------------------
+  Converts (azimuth, elevation) in radians to a unit vector [x, y, z]:
+    x = cos(el) * cos(az)
+    y = cos(el) * sin(az)
+    z = sin(el)
+  Used in the generator to place sound sources at specific angular positions.
+
+------------------------------------------------------------
+get_onset_centered_window(y, sr, window_size)
+------------------------------------------------------------
+  Extracts an audio window centered around the detected onset of a sound.
+  Used during DOA training data generation to ensure training snippets
+  capture the actual transient sound rather than silence.
+
+  Steps:
+  1. Compute onset strength envelope via librosa.onset.onset_strength
+  2. Detect onset frames; fall back to the RMS peak if none found
+  3. Randomly position the onset within the window (with margin) to prevent
+     the model from overfitting to a fixed onset position
+
+
+================================================================================
+  6. SOUND EVENT DETECTION (SED)
+================================================================================
+
+6.1  sed/model/main.py -- CNN14 Model Architecture
+----------------------------------------------------
+
+Model: Cnn14 -- A 14-layer 2D Convolutional Neural Network from the PANNs
+(Pretrained Audio Neural Networks) family, originally trained on AudioSet
+(527 classes, 2+ million audio clips).
+
+High-Level Forward Pass:
+  Raw audio waveform (1D)
+      --> STFT Spectrogram extractor
+      --> Log-mel Filterbank (64 mel bins)
+      --> Batch Normalization
+      --> 6x ConvBlock (2D Conv + BN + ReLU + AvgPool)
+          Channels: 1 -> 64 -> 128 -> 256 -> 512 -> 1024 -> 2048
+      --> Temporal pooling: Max + Avg over time axis
+      --> Fully Connected: 2048 -> 2048 -> sigmoid(N_classes)
+      --> Output: per-class probability scores (clipwise_output)
+
+Audio frontend parameters (fixed, frozen during training and inference):
+  Sample Rate  : 32,000 Hz
+  FFT Window   : 1,024 samples
+  Hop Size     : 320 samples
+  Mel Bins     : 64
+  Freq Range   : 50 Hz to 14,000 Hz
+
+ConvBlock (core building block):
+  - Two sequential 3x3 Conv2d + BatchNorm2d + ReLU layers
+  - Followed by max / avg / avg+max pooling (configurable per block)
+
+SpecAugmentation (applied only during training):
+  - Random time masking: 2 stripes, up to 64 frames wide
+  - Random frequency masking: 2 stripes, up to 8 bins wide
+
+Output:
+  A dict {'clipwise_output': tensor, 'embedding': tensor}
+  clipwise_output contains sigmoid probabilities for each class (not softmax,
+  so multiple classes can simultaneously have high confidence).
+
+
+6.2  sed/api.py -- SEDPredictor API
+-------------------------------------
+
+Class: SEDPredictor
+
+  __init__(checkpoint_path, labels_csv, device=None)
+    - Reads class labels CSV (columns: index, mid, display_name)
+    - Initializes CNN14 with the correct number of custom classes
+    - Loads fine-tuned weights from checkpoint dict {'model': state_dict}
+    - Moves model to GPU if available
+
+  NOTE: CNN14 operates internally at 32,000 Hz. The pipeline provides 16,000 Hz
+  audio. This halves effective frequency resolution but keeps inference fast with
+  no resampling overhead. This is an accepted trade-off.
+
+  predict(audio_path, top_k=5)
+    - Loads audio from file, resamples to 32 kHz
+    - Runs inference
+    - Returns list of top-k (label, probability) tuples
+
+  predict_from_buffer(audio_buffer, top_k=5)
+    - Takes a raw numpy array (mono) directly
+    - This is the method called by the real-time pipeline
+    - Returns list of top-k (label, probability) tuples
+
+
+6.3  sed/training_pipeline/dataset.py -- Dataset Loader
+---------------------------------------------------------
+
+Class: CustomAudioDataset
+  - Scans samples/ directory; each subdirectory name is a class label
+  - Loads .mp3, .wav, .flac files
+  - Resamples to 32 kHz, clips or pads to exactly 3 seconds (96,000 samples)
+  - Random crop (if audio > 3s) or zero-pad at end
+  - Random gain augmentation: scale by uniform(0.5, 1.5)
+  - Peak normalization if max amplitude > 1.0
+
+Function: get_dataloader(samples_dir, batch_size=16, num_workers=0)
+  - Creates CustomAudioDataset
+  - Uses WeightedRandomSampler for balanced class sampling
+  - Class weights = 1.0 / class_count for each class
+  - This ensures even the smallest event class gets equal representation
+    versus the usually much larger 'background' class
+
+
+6.4  sed/training_pipeline/train.py -- Fine-tuning Script
+-----------------------------------------------------------
+
+Strategy: Transfer Learning on PANNs CNN14 pre-trained on AudioSet (527 classes).
+
+Steps:
+  1. Load base CNN14 with 527-class head and pre-trained weights
+  2. Replace fc_audioset layer with new Linear(2048, N_custom_classes)
+     (Xavier-initialized for the new layer)
+  3. FREEZE early layers: ConvBlocks 1, 2, 3, 4 -- they already detect
+     low/mid-level audio features well enough
+  4. Only TRAIN: conv_block5, conv_block6, fc1, fc_audioset
+  5. BCELoss + Adam optimizer (lr=1e-4) for 15 epochs
+  6. Save best checkpoint (by train loss) to sed/model/weights/custom_Cnn14.pth
+  7. Write class label CSV to sed/model/labels/custom_class_labels_indices.csv
+
+Hyperparameters:
+  batch_size    = 16
+  epochs        = 15
+  learning_rate = 1e-4
+
+
+================================================================================
+  7. DIRECTION OF ARRIVAL (DOA)
+================================================================================
+
+7.1  doa/model/main.py -- SSLModel Architecture
+-------------------------------------------------
+
+Model: SSLModel -- A compact 1D Convolutional Neural Network for Sound Source
+Localization (SSL).
+
+  Input:  (Batch, 3, 33)   -- 3 GCC-PHAT vectors, one per mic pair, length 33
+  Output: (Batch, 3)       -- L2-normalized unit vector [x, y, z]
+
+Architecture:
+  (B, 3, 33)
+      --> Conv1D(3->32, kernel=5, padding=2) + BatchNorm + ReLU
+      --> Conv1D(32->64, kernel=3, padding=1) + BatchNorm + ReLU
+      --> Conv1D(64->128, kernel=3, padding=1) + BatchNorm + ReLU
+      --> AdaptiveAvgPool1D(1) + squeeze --> (B, 128)
+      --> Linear(128->256) + ReLU
+      --> Dropout(p=0.3)
+      --> Linear(256->128) + ReLU
+      --> Linear(128->3)
+      --> L2 Normalize --> unit vector (B, 3)
+
+The 3 GCC-PHAT vectors are treated as CHANNELS across the lag dimension,
+allowing 1D convolutions to learn joint delay patterns across all mic pairs.
+
+Why output a unit vector instead of angles?
+  Azimuth/elevation are discontinuous at +-180 degrees.
+  A unit vector on the unit sphere has no such discontinuity, making it a
+  smoother, better-conditioned regression target. At inference, the vector
+  is converted back to angles: az = atan2(y, x), el = arcsin(z).
+
+Loss function -- angular_loss(y_pred, y_true):
+  L = mean(1 - dot(y_pred, y_true))
+
+  For unit vectors, dot(a, b) = cos(theta), so this minimizes 1 - cos(theta),
+  which is equivalent to minimizing the angular separation. Unlike MSE on
+  angles, this handles spherical geometry correctly and has no wraparound issues.
+
+
+7.2  doa/api.py -- DOAPredictor API
+-------------------------------------
+
+Class: DOAPredictor
+
+  __init__(weights_path, device=None)
+    - Initializes SSLModel
+    - Loads weights from weights_path (state_dict format)
+    - Moves to GPU if available, sets to eval() mode
+
+  predict(correlation_vectors)
+    - Input: np.ndarray of shape (3, 33) -- the 3 GCC-PHAT feature vectors
+    - Raises ValueError if shape is wrong
+    - Converts to tensor, runs forward pass (torch.no_grad)
+    - Output unit vector [x, y, z] converted to degrees:
+        az_deg = atan2(y, x) * 180/pi
+        el_deg = arcsin(clip(z, -1, 1)) * 180/pi
+    - Returns (az_deg, el_deg) as Python floats
+
+
+7.3  doa/training_pipeline/train_config.py -- Training Hyperparameters
+------------------------------------------------------------------------
+
+  Parameter              Value           Description
+  -----------------------------------------------------------------------
+  LEARning_RATE          0.001           Adam optimizer LR
+  BATCH_SIZE             32              Training batch size
+  NUM_EPOCHS             50              Training epochs
+  NUM_TRAIN_SAMPLES      10,000          Synthetic training examples
+  NUM_TEST_SAMPLES       2,000           Synthetic test examples
+  ISM_MAX_ORDER          17              Room reflection order
+  PITCH_SHIFT_STEPS      (-2, 2)         Semitone range for augmentation
+  TIME_STRETCH_RATES     (0.8, 1.2)      Speed factor range
+  GAIN_RANGE             (0.6, 1.4)      Random gain scale
+  ROOM_DIM_MIN           [3, 3, 2.5] m   Min room dimensions
+  ROOM_DIM_MAX           [12, 10, 5] m   Max room dimensions
+  T60_MIN / T60_MAX      0.10 -- 0.80 s  Reverberation time range
+  SOURCE_DIST_MIN/MAX    0.5 -- 4.0 m    Source distance from mic array
+  WALL_MARGIN            0.5 m           Min distance from source to wall
+  SNR_MIN_DB / MAX_DB    10 -- 35 dB     Background noise level range
+
+
+7.4  doa/training_pipeline/data_gen/generate_data.py -- Synthetic Data Generator
+----------------------------------------------------------------------------------
+
+Purpose:
+  Generates the training and test datasets for the DOA model entirely
+  synthetically using pyroomacoustics (room acoustics simulation).
+
+Per-sample generation steps (generate_sample function):
+  1. Load audio:   Choose a random .mp3 from SAMPLES_DIR
+  2. Augment:      Random gain, pitch shift (librosa), time stretch (librosa)
+  3. Window:       Extract onset-centered 1-second window
+  4. Room setup:   Random room dims within [ROOM_DIM_MIN, ROOM_DIM_MAX]
+                   Random T60 -> compute wall absorption via Sabine's formula
+                   Create pra.ShoeBox room with ISM simulation
+  5. Mic:          Place mic array at a random center inside the room (avoiding walls)
+  6. Source:       Random azimuth (-180 to 180 deg), elevation (-60 to 60 deg),
+                   distance (0.5 to 4.0 m) -- add source to room
+  7. Simulate:     room.simulate() runs the Image Source Method
+  8. Noise:        Add white Gaussian noise at random SNR
+  9. GCC-PHAT:     Compute for all 3 mic pairs -> shape (3, 33)
+  10. Save:        Audio to audio/sample_XXXXX.wav
+                   Features to features/sample_XXXXX.npy
+                   Metadata to labels.json:
+                     {id, azimuth_rad, elevation_rad, cartesian_unit, snr_db}
+
+Rejection sampling:
+  If the computed source position falls outside the room boundaries, the sample
+  is discarded and the loop retries until the target count is reached.
+
+
+7.5  doa/training_pipeline/train.py -- DOA Training Script
+------------------------------------------------------------
+
+Class: SSLDataset(torch.utils.data.Dataset)
+  - Loads (features .npy, cartesian_unit target) pairs from the data directory
+  - Labels are read from labels.json; feature files keyed by sample id
+
+Training loop (train function):
+  - Adam optimizer + angular_loss
+  - Validation loss computed each epoch on test set
+  - Best-loss model saved to doa/model/weights/ssl_model.pth
+  - Training curve plotted and saved to _debug/training_stats.png
+
+
+================================================================================
+  8. STREAM SIMULATION
+================================================================================
+
+8.1  stream/generator.py -- AudioStreamGenerator
+-------------------------------------------------
+
+Class: AudioStreamGenerator
+
+  Simulates an infinite, realistic 4-channel audio stream from a fixed room,
+  writing blocks of audio to a shared multiprocessing queue.
+
+  __init__(samples_dir)
+    - Scans SAMPLES_DIR for audio files in subdirectories that match class
+      names present in LOCALIZATION_TRIGGERS keys
+    - Records room and mic array constants from config
+
+  generate_infinite(queue, block_duration_options=(10,15,20), chunk_duration=5.0)
+
+    Infinite loop. Each iteration generates one BLOCK, then slices it into
+    5-second CHUNKS and puts them on the queue.
+
+    Per-block steps:
+      1. Choose block duration: 10, 15, or 20 seconds randomly
+      2. Compute room absorption from ROOM_DIM, T60=0.4 via Sabine formula
+      3. Build pra.ShoeBox room, add microphone array
+      4. EVENT_PROBABILITY chance of having a sound event:
+         - If event: pick a random audio file from sample_files
+           Load up to 1.5s of audio
+           Choose random offset in [0.5s, 3.5s] within the first chunk
+           Random az (-180 to 180 deg), el (-30 to 30 deg), dist (1.2-4.0m)
+           Compute 3D source position from mic center + spherical_to_cartesian
+           Clip position to stay 0.1m from walls
+           room.add_source(pos, signal, delay)
+         - If no event: signals = zeros (silence block)
+      5. room.simulate() if source added
+      6. Pad/trim signals to block_duration * sample_rate samples
+      7. Add background noise: SNR randomly 25-40 dB
+      8. Slice into num_chunks = block_duration/chunk_duration chunks
+      9. For each chunk, find overlapping events by time window
+      10. queue.put({timestamp, audio[4, chunk_samples], events[]})
+
+    Queue throttling:
+      If queue.qsize() > 20, sleep 0.5s to prevent unbounded memory growth.
+
+  run_generator(queue)
+    Entry point for multiprocessing. Creates AudioStreamGenerator and calls
+    generate_infinite(queue).
+
+
+8.2  stream/pipeline.py -- Inference Pipeline
+-----------------------------------------------
+
+This is the heart of the real-time system.
+
+  run_pipeline(audio_queue, viz_queue=None)
+
+    Runs as a separate process. Infinite loop:
+
+      1. Dequeue chunk (blocks up to 5s timeout)
+      2. Sleep chunk_duration seconds -- simulates real-time consumption
+      3. SED inference:
+           sed_model.predict_from_buffer(audio_chunk[0], top_k=3)
+           (uses only Mic 0 -- mono input for CNN14)
+      4. Trigger check:
+           For each (label, prob) in SED top-k results:
+             If label is in LOCALIZATION_TRIGGERS AND prob > threshold:
+               detected_event = label
+               break
+      5. If detected_event is set --> DOA inference:
+           Compute GCC-PHAT for pairs: (Mic1,Mic0), (Mic2,Mic0), (Mic3,Mic0)
+           Stack to feature_tensor shape (3, 33)
+           doa_model.predict(feature_tensor) -> (pred_az, pred_el)
+           Print GT coords and angular errors to terminal
+      6. If viz_queue is provided:
+           Push {timestamp, detected_event, detected_prob, pred_az, pred_el,
+                 gt_events, sed_results, audio[0]} to viz_queue (non-blocking)
+
+  main()
+    Terminal-only mode:
+      Creates stream_queue, spawns generator process, runs pipeline in main thread.
+
+  main_with_viz()
+    Multiprocessing mode with web dashboard:
+      stream_queue = Queue(maxsize=50)
+      viz_queue    = Queue(maxsize=100)
+      gen_proc     = Process(target=run_generator, args=(stream_queue,))
+      pipe_proc    = Process(target=run_pipeline,  args=(stream_queue, viz_queue))
+      dashboard    = WebLiveDashboard(viz_queue)
+      dashboard.start()    # blocks in main thread
+
+    Uses multiprocessing.set_start_method('spawn') -- required on Windows
+    to avoid pickling issues with PyTorch model objects.
+
+  Command-line usage:
+    python stream/pipeline.py          -- terminal only
+    python stream/pipeline.py --viz    -- with web dashboard
+
+
+================================================================================
+  9. WEB VISUALIZATION
+================================================================================
+
+9.1  web_visualization/server.py -- Flask + Socket.IO Backend
+--------------------------------------------------------------
+
+A lightweight Flask application bridging the Python pipeline and the browser.
+
+  Routes:
+
+    GET  /
+      Serves index.html from the templates folder.
+
+    POST /api/init
+      Receives room config: {room_w, room_l, room_h, mic_pos}
+      Stores in current_state['init']
+      Broadcasts 'init_data' Socket.IO event to all connected browser clients.
+
+    POST /api/ping
+      Receives event data: {event_type, true_azimuth, true_elevation,
+                            pred_azimuth, pred_elevation}
+      Stores in current_state['last_event']
+      Broadcasts 'ping_data' Socket.IO event to all connected browser clients.
+
+    Socket.IO 'connect' event:
+      On new browser connection, replays the last 'init' and 'ping' states.
+      This means refreshing the browser mid-session still shows the correct room.
+
+  State:
+    current_state = {
+        'init': None,        # most recent /api/init payload
+        'last_event': None   # most recent /api/ping payload
+    }
+
+  start_server(host, port):
+    Starts the Flask + Socket.IO server via socketio.run().
+    Called by WebLiveDashboard in a subprocess.
+
+
+9.2  web_visualization/dashboard.py -- WebLiveDashboard
+---------------------------------------------------------
+
+Class: WebLiveDashboard
+
+  Acts as the bridge between the viz_queue (from pipeline) and the Flask
+  server (via HTTP POST). Runs in the main thread.
+
+  __init__(viz_queue)
+    - Stores queue reference
+    - Initializes session bookkeeping: session_start datetime, frames list
+
+  start()
+    1. Spawns Flask server in a subprocess
+    2. Waits 3 seconds for server to bind
+    3. Retries POST /api/init up to 5 times with room/mic config
+    4. Enters main viz loop:
+
+       Main loop (blocks until KeyboardInterrupt):
+         r = self.q.get()    # blocking read from viz_queue
+         Extracts: timestamp, detected_event, pred_az, pred_el,
+                   gt_events, sed_results, detected_prob
+         Computes angular errors:
+           az_err = abs(((pred_az - gt_az) + 180) % 360 - 180)   # shortest path
+           el_err = abs(pred_el - gt_el)
+         Appends frame dict to self.frames (full session record)
+         POST /api/ping {event_type, true_azimuth, true_elevation,
+                         pred_azimuth, pred_elevation}
+
+    On KeyboardInterrupt (Ctrl+C):
+      - Calls report.generate_report(frames, session_start, room_dim, mic_pos)
+      - Terminates Flask server subprocess
+      - Prints "[WebViz] Stopped."
+
+  Frame record structure (one per processed chunk):
+    {
+      'timestamp':      float    -- seconds since start
+      'gt_event':       str|None -- ground truth event class
+      'gt_az':          float    -- ground truth azimuth (degrees)
+      'gt_el':          float    -- ground truth elevation (degrees)
+      'detected_event': str|None -- detected class (or None if no trigger)
+      'detected_prob':  float    -- SED confidence score
+      'pred_az':        float    -- DOA predicted azimuth (degrees)
+      'pred_el':        float    -- DOA predicted elevation (degrees)
+      'az_err':         float    -- azimuth angular error (degrees)
+      'el_err':         float    -- elevation angular error (degrees)
+      'sed_top3':       list     -- [(label, prob), ...] top 3 SED results
+    }
+
+
+9.3  web_visualization/report.py -- Session Analysis Report
+------------------------------------------------------------
+
+Generates a detailed plain-text performance report saved to:
+  reports/sim_YYYYMMDD_HHMMSS.log
+
+Called automatically on Ctrl+C from WebLiveDashboard.
+
+  generate_report(frames, session_start, room_dim, mic_pos)
+
+    Partition frames:
+      event_frames   = chunks where gt_event is not None
+      silence_frames = chunks where gt_event is None
+      tp_frames = event_frames   where detected_event is not None  (true positive)
+      fn_frames = event_frames   where detected_event is None      (false negative)
+      fp_frames = silence_frames where detected_event is not None  (false positive)
+      tn_frames = silence_frames where detected_event is None      (true negative)
+
+    Report sections:
+
+    SECTION 1 -- EVENT TIMELINE
+      Row-per-chunk table: timestamp, GT event, detected event, confidence,
+      predicted Az/El, azimuth error, elevation error, 3D angular error.
+
+    SECTION 2 -- SED PERFORMANCE
+      Confusion matrix (TP, FN, FP, TN)
+      Precision = TP / (TP + FP)
+      Recall    = TP / (TP + FN)
+      F1 Score  = 2 * P * R / (P + R)
+      Accuracy  = (TP + TN) / total_chunks
+      Per-class miss rate breakdown
+      False positive class breakdown
+      Top SED labels during missed events
+      Qualitative rating: [GOOD] if F1>=0.8, [OK] if F1>=0.5, [WARN] if F1<0.5
+
+    SECTION 3 -- DOA PERFORMANCE
+      Evaluated only on true-positive events (correct SED + DOA prediction).
+      Metrics: MAE, Std Dev, Min, Max for azimuth error, elevation error.
+      3D Combined angular error using:
+        3D_err = arccos(cos(az_err) * cos(el_err))
+      Hit rate at <= 15 degrees (tight) and <= 30 degrees (loose)
+      ASCII progress bars for hit rates
+      Per-event DOA result table
+      Qualitative rating: [GOOD] if MAE_3D<=15, [OK] if <=30, [WARN] if >30
+
+    SECTION 4 -- EXECUTIVE SUMMARY
+      One-page overview of all key metrics.
+
+
+9.4  web_visualization/templates/index.html -- Frontend HTML
+-------------------------------------------------------------
+
+Structure of the browser UI:
+
+  Header:
+    Title "ACOUSTIC SURVEILLANCE" + live connection status dot + status text
+
+  Left panel (room-panel):
+    Three.js WebGL viewport for 3D room view (id="view3d-container")
+    Legend: Mic Array (blue), Camera (teal), Actual (red), Predicted (green)
+
+  Right column:
+    POV panel (pov-panel):
+      Second Three.js viewport: the camera's point-of-view (id="viewpov-container")
+      Camera azimuth/elevation readout
+    Log panel (log-panel):
+      Scrollable event log (id="log-content"), max 50 entries
+
+External libraries loaded:
+  Three.js r0.160.0 via ES Module import map (unpkg CDN)
+  Socket.IO 4.7.4 (cdnjs CDN)
+
+
+9.5  web_visualization/static/js/app.js -- Three.js Frontend Logic
+-------------------------------------------------------------------
+
+~493 lines of JavaScript. Runs entirely in the browser.
+
+COLOR THEME:
+  bg   = 0x1e2736  dark blue-grey background
+  grid = 0x4a5462  grid/wireframe color
+  mic  = 0x58a6ff  microphone capsules (blue)
+  cam  = 0x39d2c0  camera accent (teal)
+  gt   = 0xf85149  ground truth marker (red)
+  pred = 0x3fb950  prediction marker (green)
+
+CLASS: CameraSystem
+  Models both the physical 3D camera and a virtual POV camera.
+
+  Camera model geometry:
+    - Rectangular body: BoxGeometry(0.30 x 0.22 x 0.38)
+    - Lens barrel: CylinderGeometry placed at +Z local axis (radius=0.09m)
+    - Lens glass: translucent blue disk at z=+0.35m
+    - Teal accent stripe on top
+
+  Orientation convention:
+    Object3D.lookAt(target) makes local +Z face the target.
+    The lens barrel is at position.z = +0.25m.
+    Therefore rig.lookAt(soundSource) makes the lens correctly face the sound.
+
+  POV camera:
+    A Three.js PerspectiveCamera placed 0.40m along the look direction from
+    the rig origin (just past the lens glass at 0.35m) so the camera body
+    does not clip into the near plane.
+
+  Smooth rotation:
+    Each animation frame, current az/el slerps toward tgtAz/tgtEl at 45 deg/s.
+    Uses shortestAngle to avoid 360-degree wraparound artifacts.
+    After 5 seconds of silence: returns home to (Az=180, El=0).
+
+FUNCTION: buildRoom()
+  Rebuilds all 3D geometry when room config is received:
+    - Wireframe box outline (room walls)
+    - Floor GridHelper
+    - Axis indicator sticks: X=red, Z=green, Y=blue
+    - Mic array model: central hub sphere + 4 capsule spheres at tetrahedral
+      vertices connected by wire lines
+    - Ground-truth red sphere marker (hidden by default)
+    - Prediction green cube marker (hidden by default)
+    - New CameraSystem positioned at mic array center
+
+ANIMATION LOOP (animate, requestAnimationFrame):
+  - dt = min(elapsed, 100ms) -- capped to avoid jumps on tab switch
+  - camSystem.update(dt) -- smooth rotation step
+  - GT sphere pulsing: scale = 1.0 + 0.18 * sin(t/200)
+  - Prediction cube spinning: rotation.y += 1.8*dt, rotation.x += 0.9*dt
+  - Axis label HTML divs projected to screen coordinates
+  - Renders both WebGL viewports (3D room + POV)
+
+SOCKET.IO EVENT HANDLING:
+  'init_data'   -> applyConfig(data): updates roomSize and micPos, calls
+                   buildRoom() if dimensions changed.
+  'ping_data'   -> If event detected:
+                     Show GT sphere at micPos + dir(true_az, true_el) * 2.5m
+                     Show pred cube at micPos + dir(pred_az, pred_el) * 2.5m
+                     camSystem.setTarget(pred_az, pred_el)
+                     Append [EVENT] and [PRED] log entries
+                   If silence:
+                     Hide both markers
+                     Append [IDLE] log entry
+                   Keep log at max 50 entries.
+
+REST CONFIG FETCH:
+  On page load, fetches GET /api/config (not shown in server.py -- this is
+  a reload-resilient fallback handled by the browser fetching /api/init state).
+
+
+9.6  web_visualization/static/css/style.css -- Styling
+-------------------------------------------------------
+
+Dark-themed responsive CSS:
+  - body: background #1e2736, flex layout filling viewport
+  - Panels: semi-transparent dark with white/grey borders and rounded corners
+  - .log-hit: red-tinted background for [EVENT] entries
+  - .log-pred: green-tinted background for [PRED] entries
+  - .log-info: grey text for [IDLE] entries
+  - .status-indicator: 10px colored circle dot
+    Green (0x3fb950) when connected, Red (0xf85149) when disconnected
+
+
+================================================================================
+  10. OFFLINE EVALUATION & TESTING
+================================================================================
+
+10.1  test_runner.py -- DOA Offline Evaluator
+----------------------------------------------
+
+Batch evaluation of the DOA model on the pre-generated test set.
+
+  run_evaluation():
+    1. Load all test samples from doa/data/dataset/test/
+    2. For each sample:
+       - Load 4-channel WAV at SAMPLE_RATE
+       - Compute GCC-PHAT for 3 mic pairs -> shape (3, 33)
+       - Run SSLModel forward pass -> predicted unit vector
+       - Compute angular error:
+           cos_sim = dot(pred_vec, true_vec)
+           ang_err = arccos(cos_sim) * 180/pi
+    3. Report:
+       - Mean Angular Error (MAE) across all test samples
+       - Accuracy: percentage of samples with error < 10 degrees
+    4. Save report to doa/_debug/evaluation_report.log
+
+
+10.2  test_sed.py / test_doa.py / test_unforeseen.py
+-----------------------------------------------------
+
+Quick sanity-check scripts:
+
+  test_sed.py
+    Runs SEDPredictor.predict() on a specific audio file and prints top-k
+    results. Used to verify the SED model loads and produces sensible outputs.
+
+  test_doa.py
+    Runs DOAPredictor.predict() on a manually specified GCC-PHAT array.
+    Used to verify the DOA model loads and the coordinate conversion works.
+
+  test_unforeseen.py
+    Tests the full pipeline on audio files NOT in the training set.
+    This measures generalization: can the model handle sounds it was not
+    explicitly trained on?
+
+
+================================================================================
+  11. DATA FLOW: END-TO-END PIPELINE WALKTHROUGH
+================================================================================
+
+Below is a complete trace of one 5-second audio chunk through the system,
+using a siren event as an example.
+
+STEP 1: GENERATOR (Process 1)
+  pyroomacoustics simulates room: ROOM_DIM=[8,6,3.5], T60=0.4
+  Siren audio loaded from samples/siren/some_file.wav, trimmed to 1.5s
+  Placed at az=+97.7 deg, el=+10.6 deg, dist=2.5m from mic center
+  room.simulate() -> 4-channel signals, shape (4, 80000)
+  White noise added at SNR=30dB
+  First chunk sliced: audio[:, 0:80000]
+  events = [{event_type:"siren", az_deg:97.7, el_deg:10.6, ...}]
+  stream_queue.put({timestamp:0.0, audio:chunk, events:[...]})
+
+STEP 2: PIPELINE (Process 2)
+  Dequeues chunk from stream_queue
+  Sleeps 5.0 seconds (real-time pacing)
+  SED: predict_from_buffer(audio[0], top_k=3)
+    Returns: [("siren", 1.00), ("background", 0.00), ...]
+  Trigger check: "siren" in LOCALIZATION_TRIGGERS, 1.00 > 0.70  -> HIT
+    detected_event = "siren", detected_prob = 1.00
+  GCC-PHAT: compute for (Mic1,Mic0), (Mic2,Mic0), (Mic3,Mic0)
+    feature_tensor shape: (3, 33)
+  DOA: predict(feature_tensor) -> pred_az=104.9 deg, pred_el=13.1 deg
+  Terminal output:
+    -> SED HIT: 'siren' (Conf: 1.00)
+    -> DOA PREDICTION : Az=+104.9  El=+13.1
+    -> GROUND TRUTH   : Az=+97.7   El=+10.6
+    -> ANGULAR ERROR  : dAz=7.1    dEl=2.5
+  viz_queue.put({timestamp:0.0, detected_event:"siren", pred_az:104.9, ...})
+
+STEP 3: DASHBOARD (Main Thread)
+  Dequeues from viz_queue
+  Computes az_err=7.1, el_err=2.5
+  Appends frame to self.frames list
+  HTTP POST /api/ping {event_type:"siren", true_azimuth:97.7, true_elevation:10.6,
+                       pred_azimuth:104.9, pred_elevation:13.1}
+
+STEP 4: FLASK SERVER (Process 3)
+  Receives POST /api/ping
+  Stores in current_state['last_event']
+  socketio.emit('ping_data', data) -> broadcasts to all browser WebSocket clients
+
+STEP 5: BROWSER (Three.js)
+  socket.on('ping_data') fires
+  GT sphere: placed at micPos + getWorldDir(97.7, 10.6) * 2.5m
+  Pred cube: placed at micPos + getWorldDir(104.9, 13.1) * 2.5m
+  camSystem.setTarget(104.9, 13.1) -> camera begins rotating toward prediction
+  Log entries appended:
+    "[EVENT] siren  GT: 97.7 / 10.6"
+    "[PRED]  Az: 104.9  El: 13.1"
+
+STEP 6: ANIMATION LOOP
+  Camera smoothly rotates toward Az=104.9, El=13.1 at 45 deg/s
+  GT sphere pulses (sine wave scale oscillation)
+  Prediction cube spins on Y and X axes
+  After 5 seconds of no new event: camera returns to (Az=180, El=0)
+
+
+================================================================================
+  12. KEY ALGORITHMS EXPLAINED
+================================================================================
+
+12.1  GCC-PHAT (Time Delay Of Arrival)
+----------------------------------------
+
+Problem:
+  Sound arrives at each microphone at slightly different times. The time
+  difference (TDOA) between two microphones encodes the direction the sound
+  came from. GCC-PHAT extracts this TDOA robustly from real, reverberant audio.
+
+Formula:
+  X(f) = FFT(sig)
+  Y(f) = FFT(ref)
+  R(f) = X(f) * conj(Y(f)) / |X(f) * conj(Y(f))|   <- phase-only spectrum
+  r(t) = IFFT(R(f))                                   <- cross-correlation in time
+
+  The peak of r(t) at lag tau means the signal arrived tau samples later at
+  sig than at ref. The maximum physical lag is bounded by:
+    MAX_LAG = ceil(MAX_MIC_SEP / speed_of_sound * sample_rate)
+
+Why phase whitening?
+  Without it, the correlation is dominated by spectral peaks (vowels, harmonics).
+  Whitening makes the spectrum flat so the peak is purely the geometric delay.
+
+Why 3 pairs?
+  4 microphones -> 3 independent TDOA measurements relative to mic 0.
+  Each captures one "dimension" of spatial information. Together they constrain
+  the full 3D direction to a single point on the unit sphere.
+
+
+12.2  Room Acoustics Simulation (Image Source Method)
+------------------------------------------------------
+
+pyroomacoustics uses the Image Source Method (ISM):
+  The room is "unfolded" by mirroring virtual image sources across all walls.
+  Each reflected image source corresponds to a delayed, attenuated copy of the
+  signal. Up to max_order reflections are simulated.
+
+Sabine's formula (used to compute absorption from T60):
+  absorption = 1 - exp(-0.161 * V / (A * T60))
+  where V = room volume (m^3), A = total wall surface area (m^2),
+  T60 = reverberation time (seconds), absorption = average wall absorption coeff.
+
+The result is multi-channel audio where each channel is the convolution of the
+source signal with the room impulse response for that microphone position.
+This is how realistic inter-microphone timing differences are simulated.
+
+
+12.3  SSLModel: 1D CNN for DOA
+--------------------------------
+
+Key insight:
+  GCC-PHAT vectors have a clear structural property: the lag index tau
+  corresponds to a physical time delay. A 1D convolution over the lag dimension
+  learns patterns like "peak at lag +3 means sound came from the right."
+  Treating 3 mic-pair GCC-PHAT vectors as 3 channels allows the model to
+  learn joint cross-pair patterns (e.g., certain delay combinations only occur
+  for specific 3D directions).
+
+Angular loss:
+  L = 1 - cos(theta) is the cosine distance.
+  For small errors: cos(theta) ~= 1 - theta^2/2, so this is locally like MSE.
+  For large errors, it saturates smoothly (bounded between 0 and 2).
+  Critically, it directly minimizes what we care about: the angular error in 3D.
+
+
+12.4  CNN14: 2D CNN for SED
+-----------------------------
+
+CNN14 treats audio as a 2D image -- the log-mel spectrogram.
+  X axis = time, Y axis = frequency bins (64 mel bands).
+  2D convolutions learn local time-frequency patterns:
+
+  Early layers (low-level):
+    Energy onset shapes, spectral edges, sharp transient bursts
+
+  Middle layers (mid-level):
+    Tonal lines, periodic patterns, resonance structures
+
+  Late layers (high-level):
+    Class-specific signatures:
+      Gunshot  -> broadband impulsive transient
+      Siren    -> slowly sweeping tonal pattern
+      Glass    -> high-frequency shatter burst
+
+  Temporal pooling (max + avg):
+    Makes the model clip-level (event-level) rather than frame-level.
+    Does not matter WHERE in the clip the event occurs; the model detects
+    that it occurred somewhere within the clip. This is intentional -- the
+    pipeline chunks audio and the model classifies each chunk.
+
+
+================================================================================
+  13. HOW TO RUN THE SYSTEM
+================================================================================
+
+Prerequisites:
+  Python 3.x, pip, a virtual environment.
+  Install all dependencies:
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    pip install -r requirements.txt
+
+  Ensure the following files exist (pre-trained weights):
+    doa/model/weights/ssl_model.pth
+    sed/model/weights/custom_Cnn14.pth
+    sed/model/labels/custom_class_labels_indices.csv
+
+  Ensure audio samples exist in samples/ (one subdirectory per class):
+    samples/siren/
+    samples/Gunshot/
+    samples/Glassbreak/
+    samples/explosion/
+    samples/whack/
+
+------------------------------------------------------------
+Running the full pipeline with web visualization:
+------------------------------------------------------------
+  python stream\pipeline.py --viz
+
+  Then open: http://127.0.0.1:5000 in a browser.
+
+  What happens on start:
+    1. Flask server spawns -> listens on port 5000
+    2. Generator process starts -> begins synthesizing audio blocks
+    3. Pipeline process starts -> models load (may take 10-20 seconds)
+    4. Dashboard POSTs room config -> browser renders the 3D room
+    5. First audio chunks processed -> events shown in browser
+
+  Stopping: Press Ctrl+C in the terminal.
+    - All subprocesses terminated
+    - Session analysis report written to reports/sim_YYYYMMDD_HHMMSS.log
+
+------------------------------------------------------------
+Running pipeline without visualization (terminal only):
+------------------------------------------------------------
+  python stream\pipeline.py
+
+------------------------------------------------------------
+Generating new DOA training data:
+------------------------------------------------------------
+  python -m doa.training_pipeline.data_gen.generate_data
+
+------------------------------------------------------------
+Training the DOA model:
+------------------------------------------------------------
+  python -m doa.training_pipeline.train
+
+------------------------------------------------------------
+Fine-tuning the SED model:
+------------------------------------------------------------
+  python -m sed.training_pipeline.train
+
+------------------------------------------------------------
+Offline DOA batch evaluation:
+------------------------------------------------------------
+  python test_runner.py
+
+
+================================================================================
+  14. DEPENDENCIES
+================================================================================
+
+  numpy           Numerical arrays; all signal processing math
+  soundfile       Reading and writing WAV files (training data I/O)
+  pyroomacoustics Room acoustics simulation via Image Source Method
+  tqdm            Progress bars during data generation and training
+  scipy           FFT functions (rfft/irfft) used in GCC-PHAT
+  librosa         Audio loading, resampling, onset detection,
+                  pitch shift, time stretch (augmentation)
+  torch           PyTorch: all model definitions, training, inference
+  torchvision     Indirect dependency of PyTorch ecosystem
+  matplotlib      Training loss curves (DOA training only)
+  pandas          Reading class label CSV for SED
+  scikit-learn    Utility ML tools
+  torchlibrosa    STFT spectrogram + Log-mel filterbank layers
+                  (used inside CNN14 as learnable frontend)
+  sounddevice     Legacy; originally for real microphone input
+  flask           REST API server for the web dashboard
+  flask-socketio  WebSocket (Socket.IO) support on top of Flask
+
+
+================================================================================
+  15. CONFIGURATION QUICK-REFERENCE TABLE
+================================================================================
+
+All values live in config.py.
+Changing a value there propagates to ALL modules that use "from config import *".
+
+  Parameter                  Current Value        What Tuning Does
+  -----------------------------------------------------------------------
+  EVENT_PROBABILITY          0.9                  Up -> more events in stream
+                                                  Down -> more silence blocks
+
+  LOCALIZATION_TRIGGERS      Glassbreak: 0.70     Lower threshold -> more
+  (per-class thresholds)     Gunshot:    0.70     sensitive (more false positives)
+                             explosion:  0.40     Higher -> more precise
+                             whack:      0.70     (more false negatives)
+                             siren:      0.70
+
+  ROOM_DIM                   [8.0, 6.0, 3.5] m   Changes room reverb + 3D view
+
+  MIC_ARRAY_CENTER           [4.0, 3.0, 1.5] m   Physical mic position in room
+
+  SAMPLE_RATE                16000 Hz             DO NOT change without retraining
+                                                  the DOA model from scratch
+
+  ARRAY_RADIUS               0.05 m               Larger -> longer inter-mic delay
+                                                  -> changes MAX_LAG + model input
+                                                  (requires retraining DOA model)
+
+  CAMERA_TURN_SPEED          30.0 deg/s           Only affects legacy visualize/
+                                                  module, not the web dashboard
+
+  CAMERA_INIT_AZ             0.0 deg              Legacy module only
+
+  CAMERA_INIT_EL             0.0 deg              Legacy module only
+
+
+================================================================================
+  END OF DOCUMENTATION
+================================================================================
