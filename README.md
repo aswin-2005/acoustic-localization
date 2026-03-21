@@ -1,5 +1,7 @@
 # Acoustic Surveillance Pipeline
 
+![screenshot of web visualization](image.png)
+
 A real-time audio analysis system and ML pipeline for acoustic surveillance. This project simulates a continuous multi-channel audio stream from a 4-microphone array in a 3D room, detects threatening sound events, determines their direction of arrival, and visualizes the results in real-time.
 
 ## Features
