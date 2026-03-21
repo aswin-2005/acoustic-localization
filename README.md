@@ -1,4 +1,4 @@
-# Acoustic Surveillance Pipeline
+# Acoustic Sound Event Detection and Localization
 
 ![screenshot of web visualization](image.png)
 
